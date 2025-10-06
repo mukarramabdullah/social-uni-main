@@ -2,8 +2,10 @@
 import { Request, Response } from "express";
 import BaseController from "../../../core/controller/base.controller";
 import UserService from "../services/user.service";
+import { CloudinaryService } from "../../../core/services/cloudinary.service";
 
 class UserController extends BaseController {
+    private cloudinaryService: CloudinaryService = CloudinaryService.getInstance();
     // ✅ Get all users
     getAllUsers = async (req: Request, res: Response) => {
         this.handleRequest(async () => {
@@ -44,7 +46,54 @@ class UserController extends BaseController {
     updateUser = async (req: Request, res: Response) => {
         this.handleRequest(async () => {
             const { id } = req.params;
-            const updatedUser = await UserService.updateUser(id, req.body);
+
+            // Fetch current user to potentially clean up old images
+            const existingUser: any = await UserService.getUserById(id);
+            if (!existingUser) throw "User not found";
+
+            const {
+                profile,
+                cover,
+                profile_image,
+                cover_image,
+                ...rest
+            } = req.body as any;
+
+            const updates: any = { ...rest };
+
+            // Handle profile image upload (supports `profile` or `profile_image` keys)
+            const incomingProfile = profile ?? profile_image;
+            if (incomingProfile && typeof incomingProfile === "string" && incomingProfile.trim().length > 0) {
+                if (existingUser.profile_image) {
+                    try { await this.cloudinaryService.deleteImage(existingUser.profile_image); } catch { /* ignore */ }
+                }
+                const profileBuffer = Buffer.from(incomingProfile, 'base64');
+                const profileFile = {
+                    buffer: profileBuffer,
+                    originalname: `profile-${Date.now()}.jpg`,
+                    mimetype: 'image/jpeg',
+                } as Express.Multer.File;
+                const profileUrl = await this.cloudinaryService.uploadImage(profileFile, 'profiles');
+                updates.profile_image = profileUrl;
+            }
+
+            // Handle cover image upload (supports `cover` or `cover_image` keys)
+            const incomingCover = cover ?? cover_image;
+            if (incomingCover && typeof incomingCover === "string" && incomingCover.trim().length > 0) {
+                if (existingUser.cover_image) {
+                    try { await this.cloudinaryService.deleteImage(existingUser.cover_image); } catch { /* ignore */ }
+                }
+                const coverBuffer = Buffer.from(incomingCover, 'base64');
+                const coverFile = {
+                    buffer: coverBuffer,
+                    originalname: `cover-${Date.now()}.jpg`,
+                    mimetype: 'image/jpeg',
+                } as Express.Multer.File;
+                const coverUrl = await this.cloudinaryService.uploadImage(coverFile, 'covers');
+                updates.cover_image = coverUrl;
+            }
+
+            const updatedUser = await UserService.updateUser(id, updates);
             if (!updatedUser) throw "User not found";
             return updatedUser;
         }, "User updated successfully", "Failed to update user", res);
